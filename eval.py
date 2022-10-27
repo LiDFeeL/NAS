@@ -34,4 +34,5 @@ def eval_classification(
         ]
         dist.all_gather(tensor_list, stats)
         correct_preds, total_samples = torch.vstack(tensor_list).sum(dim=0).cpu().numpy()
+
     return correct_preds / total_samples

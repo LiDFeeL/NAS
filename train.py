@@ -88,8 +88,8 @@ def train(
     lr: float = 0.1,
     optimizer: Union[torch.optim.Optimizer, None] = None,
     scheduler: Union[torch.optim.lr_scheduler._LRScheduler, None] = None,
-    batch_size: int = 256,
-    epochs: int = 150,
+    batch_size: int = 128,
+    epochs: int = 300,
     logdir: str = "./output/",
 ):
     device = torch.cuda.current_device()
@@ -108,7 +108,7 @@ def train(
             )
         scheduler = MultiStepLR(
             optimizer,
-            milestones=[75, 100],
+            milestones=[150, 225],
             gamma=0.1,
         )
 
@@ -195,8 +195,8 @@ if __name__ == "__main__":
     parser.add_argument("--num-gpus", default=1, type=int)
 
     parser.add_argument("--learning-rate", "-lr", default=0.1, type=float)
-    parser.add_argument("--batch-size", "-b", default=256, type=int)
-    parser.add_argument("--epochs", "-ep", default=150, type=int)
+    parser.add_argument("--batch-size", "-b", default=128, type=int)
+    parser.add_argument("--epochs", "-ep", default=300, type=int)
 
     parser.add_argument("--path-to-data", default="./data/", type=str)
     parser.add_argument("--logdir", default="./output/", type=str)
