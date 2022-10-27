@@ -8,7 +8,7 @@ import utils
 def eval_classification(
     model: nn.Module,
     eval_dataset: Dataset,
-    batch_size: int = 256,
+    batch_size: int = 128,
 ) -> float:
     device = torch.cuda.current_device()
     model.to(device)
