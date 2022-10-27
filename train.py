@@ -121,7 +121,8 @@ def train(
 
     train_sampler = utils.get_sampler(train_dataset)
     dataloader = DataLoader(train_dataset, batch_size, sampler=train_sampler, num_workers=4)
-    writer = SummaryWriter(log_dir=logdir)
+    if utils.is_main_process():
+        writer = SummaryWriter(log_dir=logdir)
 
     current_iteration = 0
     for i in range(epochs):
