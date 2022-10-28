@@ -100,7 +100,12 @@ def train(
     logging.basicConfig(level=logging.INFO)
 
     if optimizer is None:
-        optimizer = torch.optim.Adam(model.parameters(), lr)
+        optimizer = torch.optim.SGD(
+            model.parameters(),
+            lr,
+            momentum=0.9,
+            weight_decay=5e-4
+        )
         if epochs <= 100:
             logger.warning(
                 "About to instantiate LR scheduler with milestone greater than" \
@@ -131,10 +136,15 @@ def train(
             loss = criterion(logits, gt_labels.to(device))
             if utils.is_main_process():
                 writer.add_scalar("Training Loss", loss.item(), current_iteration)
+                writer.add_scalar(
+                    "Learning Rate",
+                    scheduler.get_last_lr()[0],
+                    current_iteration
+                )
                 logger.info(
                     f"Epoch: {i+1}/{epochs}, Total iter: {current_iteration}, "
                     f"Training loss: {loss.item():.4f}, Batch size: {batch_size}, "
-                    f"Learning rate: {scheduler.get_last_lr()}, "
+                    f"Learning rate: {scheduler.get_last_lr()[0]:.4f}, "
                     f"Time: {datetime.now().ctime()}"
                 )
 
@@ -166,7 +176,8 @@ def main(args):
     of final linear layer).
     """
     # TODO: make final dim & criterion more flexible
-    model = load_model(10, [])
+    final_dim = utils.dataset_final_dim(args.dataset)
+    model = load_model(final_dim, [])
     train_dataset = utils.load_dataset(
         args.dataset,
         train=True,

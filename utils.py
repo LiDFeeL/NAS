@@ -3,7 +3,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.utils.data import Dataset, RandomSampler, Sampler
 from torch.utils.data.distributed import DistributedSampler
-import torchvision.transforms as transforms
+import torchvision.transforms as T
 from torchvision.datasets import CIFAR10, CIFAR100
 from torchvision.models import ResNet50_Weights
 
@@ -14,8 +14,23 @@ import socket
 def load_dataset(name: str,
                  train: bool = True,
                  path_to_store: str = "./data") -> torch.utils.data.Dataset:
-    # Required transformations for pretrained Resnet
-    transform = ResNet50_Weights.DEFAULT.transforms()
+    # Required transformations for pretrained Resnet-50
+    mean, std = dataset_mean_std(name)
+    transform = T.Compose([
+        T.ToTensor(),
+        T.Resize(256),
+        T.RandomCrop(224),
+        T.Normalize(mean, std),
+    ])
+    # Additional augmentations in training setting
+    if train:
+        transform = T.Compose([
+            T.GaussianBlur((5, 5)),
+            T.ColorJitter(brightness=.5, hue=.3),
+            T.RandomHorizontalFlip(),
+            T.RandomVerticalFlip(),
+            transform,
+        ])
 
     if name == "cifar-10":
         return CIFAR10(path_to_store, train, transform, download=True)
@@ -25,7 +40,26 @@ def load_dataset(name: str,
         logger = logging.getLogger("utils")
         logger.error("Dataset %s not yet supported!" % name)
 
-# TODO: add dataset to final dim utility
+def dataset_mean_std(name: str):
+    if name == "cifar-10":
+        mean = (0.4914, 0.4822, 0.4465)
+        std = (0.2470, 0.2435, 0.2616)
+    elif name == "cifar-100":
+        mean = (0.5071, 0.4865, 0.4409)
+        std = (0.2673, 0.2564, 0.2762)
+    else:
+        logger = logging.getLogger("utils")
+        logger.error("Dataset %s not yet supported!" % name)
+    return mean, std
+    
+def dataset_final_dim(name: str) -> int:
+    if name == "cifar-10":
+        return 10
+    elif name == "cifar-100":
+        return 100
+    else:
+        logger = logging.getLogger("utils")
+        logger.error("Dataset %s not yet supported!" % name)
 
 def _find_free_port() -> int:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
