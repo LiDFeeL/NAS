@@ -51,7 +51,8 @@ def dataset_mean_std(name: str):
         logger = logging.getLogger("utils")
         logger.error("Dataset %s not yet supported!" % name)
     return mean, std
-    
+
+# TODO: support other CV tasks later on
 def dataset_final_dim(name: str) -> int:
     if name == "cifar-10":
         return 10

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel
-from torch.optim.lr_scheduler import ConstantLR, MultiStepLR
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.models import resnet50, ResNet50_Weights
@@ -34,15 +34,29 @@ class Layer:
         self.type = type
         self.parameters = parameters
 
-def load_model(final_features: int, head_layers: list[Layer]) -> nn.Module:
+def load_model(
+    final_features: int,
+    head_layers: list[Layer],
+    freeze_backbone: bool = True,
+) -> nn.Module:
     device = torch.cuda.current_device()
     model = resnet50(weights=ResNet50_Weights.DEFAULT).to(device)
+
+    # Freeze model backbone if necessary
+    if freeze_backbone:
+        for layer in model.children():
+            for param in layer.parameters():
+                param.requires_grad = False
+
     class Head(nn.Module):
         def __init__(self, in_features: int, head_layers: list[Layer]):
             super().__init__()
             self.in_features = in_features
             self.layers_metadata = head_layers
             self.layers = []
+            # Separate list of modules to log the parameters in PyTorch
+            # TODO: merge the two together
+            self.modulelist = nn.ModuleList()
 
             curr_features = in_features
             for layer in self.layers_metadata:
@@ -51,10 +65,14 @@ def load_model(final_features: int, head_layers: list[Layer]) -> nn.Module:
                     curr_layer = nn.Linear(curr_features, layer.parameters[0]).to(device)
                     curr_features = layer.parameters[0]
                 # TODO: complete this portion
+
+                if curr_layer is not None:
+                    self.modulelist.append(curr_layer)
                 self.layers.append(curr_layer)
 
             # Add a linear layer at the end to make sure final dimensions match up
             final_layer = nn.Linear(curr_features, final_features).to(device)
+            self.modulelist.append(final_layer)
             self.layers.append(final_layer)
         
         def forward(self, data):
@@ -106,23 +124,8 @@ def train(
             momentum=0.9,
             weight_decay=5e-4
         )
-        if epochs <= 100:
-            logger.warning(
-                "About to instantiate LR scheduler with milestone greater than" \
-                "total number of epochs"
-            )
-        scheduler = MultiStepLR(
-            optimizer,
-            milestones=[150, 225],
-            gamma=0.1,
-        )
-
     if scheduler is None:
-        # A constant LR scheduler that uses the LR of the optimizer
-        scheduler = ConstantLR(
-            optimizer,
-            factor=1,
-        )
+        scheduler = CosineAnnealingLR(optimizer, T_max=epochs)
 
     train_sampler = utils.get_sampler(train_dataset)
     dataloader = DataLoader(train_dataset, batch_size, sampler=train_sampler, num_workers=4)
@@ -175,9 +178,13 @@ def main(args):
     Train and evaluate baseline model (i.e. only change dimension 
     of final linear layer).
     """
-    # TODO: make final dim & criterion more flexible
+    # TODO: make criterion more flexible
     final_dim = utils.dataset_final_dim(args.dataset)
-    model = load_model(final_dim, [])
+    model = load_model(
+        final_dim,
+        head_layers=[],
+        freeze_backbone=not args.train_from_scratch
+    )
     train_dataset = utils.load_dataset(
         args.dataset,
         train=True,
@@ -209,6 +216,7 @@ if __name__ == "__main__":
     parser.add_argument("--learning-rate", "-lr", default=0.1, type=float)
     parser.add_argument("--batch-size", "-b", default=128, type=int)
     parser.add_argument("--epochs", "-ep", default=300, type=int)
+    parser.add_argument("--train-from-scratch", "-tfs", action="store_true")
 
     parser.add_argument("--path-to-data", default="./data/", type=str)
     parser.add_argument("--logdir", default="./output/", type=str)
