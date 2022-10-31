@@ -5,12 +5,12 @@ from torch.utils.data import Dataset, RandomSampler, Sampler
 from torch.utils.data.distributed import DistributedSampler
 import torchvision.transforms as T
 from torchvision.datasets import CIFAR10, CIFAR100
-from torchvision.models import ResNet50_Weights
 
 from datetime import timedelta
 import logging
 import socket
 
+# TODO: add support for pretrained feature extractor
 def load_dataset(name: str,
                  train: bool = True,
                  path_to_store: str = "./data") -> torch.utils.data.Dataset:
@@ -53,7 +53,7 @@ def dataset_mean_std(name: str):
     return mean, std
 
 # TODO: support other CV tasks later on
-def dataset_final_dim(name: str) -> int:
+def dataset_num_classes(name: str) -> int:
     if name == "cifar-10":
         return 10
     elif name == "cifar-100":
