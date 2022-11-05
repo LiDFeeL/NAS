@@ -8,29 +8,37 @@ from torchvision.datasets import CIFAR10, CIFAR100
 
 from datetime import timedelta
 import logging
+import os
 import socket
 
-# TODO: add support for pretrained feature extractor
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 def load_dataset(name: str,
                  train: bool = True,
-                 path_to_store: str = "./data") -> torch.utils.data.Dataset:
+                 path_to_store: str = "./data/",
+                 transform = None) -> Dataset:
+    if is_main_process():
+        logger = logging.getLogger("utils")
+        logger.info(f"Attempting to load dataset {name}...")
+
     # Required transformations for pretrained Resnet-50
     mean, std = dataset_mean_std(name)
-    transform = T.Compose([
-        T.ToTensor(),
-        T.Resize(256),
-        T.RandomCrop(224),
-        T.Normalize(mean, std),
-    ])
-    # Additional augmentations in training setting
-    if train:
+    if transform is None:
         transform = T.Compose([
-            T.GaussianBlur((5, 5)),
-            T.ColorJitter(brightness=.5, hue=.3),
-            T.RandomHorizontalFlip(),
-            T.RandomVerticalFlip(),
-            transform,
+            T.ToTensor(),
+            T.Resize(256),
+            T.RandomCrop(224),
+            T.Normalize(mean, std),
         ])
+        # Additional augmentations in training setting
+        if train:
+            transform = T.Compose([
+                T.GaussianBlur((5, 5)),
+                T.ColorJitter(brightness=.5, hue=.3),
+                T.RandomHorizontalFlip(),
+                T.RandomVerticalFlip(),
+                transform,
+            ])
 
     if name == "cifar-10":
         return CIFAR10(path_to_store, train, transform, download=True)
