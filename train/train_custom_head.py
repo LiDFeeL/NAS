@@ -9,7 +9,7 @@ import torch.distributed as dist
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import Dataset, DataLoader
-from torchvision.models.resnet import ResNet, resnet50
+from torchvision.models.resnet import ResNet
 import torchvision.transforms as T
 
 import argparse
@@ -174,7 +174,7 @@ def main(args):
 
     pretrained_model = load_model(
         num_classes,
-        head_layers=[Layer(LayerType.AvgPool, (1, 1))],
+        head_layers="AvgPool: 1, 1",
         from_checkpoint=args.pretrained_model_path,
         multi_gpu=False
     )
