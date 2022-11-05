@@ -1,4 +1,3 @@
-from operator import is_
 import torch
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel
