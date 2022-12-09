@@ -20,15 +20,15 @@ from tqdm import tqdm
 
 import utils
 from train.train_baseline import (
-    HeadWoLinear, Layer, LayerType,
-    load_model, train
+    HeadWoLinear, load_model, train
 )
 
 class ExtractedFeatureDataset(Dataset):
-    def __init__(self, features_path):
+    def __init__(self, features_path, use_percent=1):
+        assert 0 < use_percent <= 1
         self.features_path = features_path
         file_path = os.path.join(features_path, "len.pt")
-        self.num_samples = torch.load(file_path)
+        self.num_samples = int(torch.load(file_path) * use_percent)
 
     def __len__(self):
         return self.num_samples
@@ -41,6 +41,7 @@ def load_extracted_features(
     dataset_name: str,
     pretrained_model: ResNet,
     train: bool = True,
+    use_percent: float = 1,
     path_to_store: str = "./data/",
 ) -> Dataset:
     """
@@ -120,7 +121,7 @@ def load_extracted_features(
         # that do not yet exist on disk)
         dist.barrier()
 
-    return ExtractedFeatureDataset(features_path)
+    return ExtractedFeatureDataset(features_path, use_percent)
 
 class Head(nn.Module):
     def __init__(self, num_classes: int, head_wo_linear: HeadWoLinear):
@@ -200,12 +201,12 @@ def main(args):
         batch_size=args.batch_size,
         epochs=args.epochs,
         logdir=args.logdir,
-        eval_between_epochs=not args.no_eval_between_epochs,
+        do_logging=not args.no_logging,
     )
 
     if utils.is_main_process() and args.save_head:
         head_path = os.path.join(args.logdir, "final_head.pth")
-        logger = logging.getLogger("train")
+        logger = logging.getLogger("train_custom_head")
         logger.info(f"Saving head parameters to {head_path}...")
 
         # Retrieve underlying model in case model is DDP
@@ -229,7 +230,7 @@ if __name__ == "__main__":
     parser.add_argument("--learning-rate", "-lr", default=4e-3, type=float)
     parser.add_argument("--batch-size", "-b", default=128, type=int)
     parser.add_argument("--epochs", "-ep", default=30, type=int)
-    parser.add_argument("--no-eval-between-epochs", "-nebe", action="store_true")
+    parser.add_argument("--no-logging", "-nolog", action="store_true")
 
     parser.add_argument("--path-to-data", default="./data/", type=str)
     parser.add_argument("--save-head", "-sh", action="store_true")

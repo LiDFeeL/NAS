@@ -15,20 +15,22 @@ import logging
 import os
 import re
 import time
+from tqdm import tqdm
 from typing import Union
 
 from eval.eval import eval_classification
 import utils
 
 class LayerType(IntEnum):
-    Linear = 1              # Parameter:  out_features
+    Start = 0
+    Linear = 1              # Parameter:  output_height, output_width
     Conv = 2                # Parameters: out_channels, kernel_size, stride
     BatchNorm = 3           # Parameters: None
     LayerNorm = 4           # Parameters: None
     # Note: Using AdaptiveAvgPool2d / AdaptiveMaxPool2d for the two layers below
     AvgPool = 5             # Parameters: output_height, output_width
     MaxPool = 6             # Parameters: output_height, output_width
-    Upsampling = 7          # Parameter:  scale_factor
+    Upsampling = 7          # Parameter:  scale_height, scale_width
     Relu = 8                # Parameters: None
     Tanh = 9                # Parameters: None
     Sigmoid = 10            # Parameters: None
@@ -36,13 +38,14 @@ class LayerType(IntEnum):
     End = 12
 
 _num_params_per_layer = {
-    LayerType.Linear:           1,
+    LayerType.Start:            0,
+    LayerType.Linear:           2,
     LayerType.Conv:             3,
     LayerType.BatchNorm:        0,
     LayerType.LayerNorm:        0,
     LayerType.AvgPool:          2,
     LayerType.MaxPool:          2,
-    LayerType.Upsampling:       1,
+    LayerType.Upsampling:       2,
     LayerType.Relu:             0,
     LayerType.Tanh:             0,
     LayerType.Sigmoid:          0,
@@ -56,6 +59,18 @@ class Layer:
         self.type = type
         self.parameters = parameters
 
+class View(nn.Module):
+    """
+    Helper class to do final reshape in linear layer, so that we can use
+    nn.Sequential.
+    """
+    def __init__(self, shape):
+        super().__init__()
+        self.shape = shape
+
+    def forward(self, x):
+        return x.view(*self.shape)
+        
 class HeadWoLinear(nn.Module):
     def __init__(self, in_size: list[int], head_layers: list[Layer]):
         super().__init__()
@@ -70,7 +85,14 @@ class HeadWoLinear(nn.Module):
         for layer in self.layers_metadata:
             curr_layer : Union[nn.Module, None] = None
             if layer.type == LayerType.Linear:
-                curr_layer = nn.Linear(curr_size[-1], layer.parameters[0])
+                curr_layer = nn.Sequential(
+                    nn.Flatten(start_dim=2),
+                    nn.Linear(
+                        curr_size[-2] * curr_size[-1],
+                        layer.parameters[0] * layer.parameters[1]
+                    ),
+                    View((-1, curr_size[1], layer.parameters[0], layer.parameters[1]))
+                )
             elif layer.type == LayerType.Conv:
                 curr_layer = nn.Conv2d(
                     in_channels=curr_size[1],
@@ -78,9 +100,22 @@ class HeadWoLinear(nn.Module):
                     kernel_size=layer.parameters[1],
                     stride=layer.parameters[2]
                 )
+            elif layer.type == LayerType.BatchNorm:
+                curr_layer = nn.BatchNorm2d(curr_size[1])
+            elif layer.type == LayerType.LayerNorm:
+                curr_layer = nn.LayerNorm(curr_size[1:])
             elif layer.type == LayerType.AvgPool:
                 curr_layer = nn.AdaptiveAvgPool2d(layer.parameters)
-            # TODO: complete this portion
+            elif layer.type == LayerType.MaxPool:
+                curr_layer = nn.AdaptiveMaxPool2d(layer.parameters)
+            elif layer.type == LayerType.Upsampling:
+                curr_layer = nn.UpsamplingBilinear2d(scale_factor=layer.parameters)
+            elif layer.type == LayerType.Relu:
+                curr_layer = nn.ReLU()
+            elif layer.type == LayerType.Tanh:
+                curr_layer = nn.Tanh()
+            elif layer.type == LayerType.Sigmoid:
+                curr_layer = nn.Sigmoid()
 
             # Keep track of current dimensions
             if curr_layer is not None:
@@ -101,7 +136,7 @@ class HeadWoLinear(nn.Module):
             # Handle skip connections separately
             elif self.layers_metadata[i].type == LayerType.SkipConnection:
                 starting_layer = self.layers_metadata[i].parameters[0]
-                data = outputs[starting_layer+1] + outputs[-1] # TODO: dimension might not match
+                data = outputs[starting_layer+1] + outputs[-1]
             outputs.append(data)
         return data
 
@@ -161,7 +196,6 @@ def load_model(
         )
     return model
 
-# TODO: reward & controller
 def train(
     model: nn.Module,
     train_dataset: Dataset,
@@ -173,7 +207,7 @@ def train(
     batch_size: int = 128,
     epochs: int = 300,
     logdir: str = "./output/",
-    eval_between_epochs: bool = True,
+    do_logging: bool = True,
 ):
     """
     Train the model from the given model.
@@ -199,12 +233,19 @@ def train(
         scheduler = CosineAnnealingLR(optimizer, T_max=epochs)
 
     train_sampler = utils.get_sampler(train_dataset)
-    dataloader = DataLoader(train_dataset, batch_size, sampler=train_sampler, num_workers=4)
-    if utils.is_main_process():
+    dataloader = DataLoader(train_dataset, batch_size, sampler=train_sampler)
+    if do_logging and utils.is_main_process():
         writer = SummaryWriter(log_dir=logdir)
 
     current_iteration = 0
-    for i in range(epochs):
+
+    # Only do tqdm progress bar when no real-time logging information
+    # is displayed
+    iterable = range(epochs)
+    if not do_logging:
+        iterable = tqdm(iterable)
+
+    for i in iterable:
         data_start_time = time.time()
         for data, gt_labels in dataloader:
             data_time = time.time() - data_start_time
@@ -214,7 +255,7 @@ def train(
             inference_time = time.time() - inference_start_time
 
             loss = criterion(logits, gt_labels.to(device))
-            if utils.is_main_process():
+            if do_logging and utils.is_main_process():
                 writer.add_scalar("Data Time", data_time, current_iteration)
                 writer.add_scalar("Inference Time", inference_time, current_iteration)
                 writer.add_scalar(
@@ -240,14 +281,14 @@ def train(
             data_start_time = time.time()
 
         # Evaluate on validation set
-        if eval_between_epochs or i == epochs - 1:
+        if do_logging or i == epochs - 1:
             model.eval()
             if utils.is_main_process():
                 logger.info(f"Evaluating checkpoint after epoch {i+1}...")
-            # TODO: support other CV tasks later on
             validation_acc = eval_classification(model, validation_dataset, batch_size)
             if utils.is_main_process():
-                writer.add_scalar("Validation Accuracy", validation_acc, i)
+                if do_logging:
+                    writer.add_scalar("Validation Accuracy", validation_acc, i)
                 logger.info(
                     f"Epoch: {i+1}/{epochs}, Validation accuracy: {validation_acc:.3f}, "
                     f"Batch size: {batch_size}, Time: {datetime.now().ctime()}"
@@ -263,8 +304,6 @@ def main(args):
     Train and evaluate baseline model with a user-determined head, changing the
     dimension of the final linear layer if necessary.
     """
-    # TODO: make criterion more flexible
-
     # Make sure INFO-level logging is not ignored
     logging.basicConfig(level=logging.INFO)
 
