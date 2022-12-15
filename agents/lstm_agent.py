@@ -13,6 +13,7 @@ class LSTMAgent(BaseAgent):
     def __init__(
         self,
         baseline_reward: float,
+        reward_scale: float,
         max_seq_len: int = 128,
         embedding_dim: int = 32,
         lstm_hidden_dim: int = 128,
@@ -21,6 +22,7 @@ class LSTMAgent(BaseAgent):
     ):
         super().__init__()
         self.baseline_reward = baseline_reward
+        self.reward_scale = reward_scale
         self.max_seq_len = max_seq_len
         self.embedding_dim = embedding_dim
         self.lstm_hidden_dim = lstm_hidden_dim
@@ -119,11 +121,11 @@ class LSTMAgent(BaseAgent):
         heads_log_prob: Union[torch.Tensor, None] = None
     ) -> dict:
         current_log_prob = self.log_prob(heads)
+        scaled_advantage = self.reward_scale * (rewards - self.baseline_reward)
         if on_policy:
-            J = current_log_prob * (rewards - self.baseline_reward)
+            J = current_log_prob * scaled_advantage
         else:
-            J = torch.exp(current_log_prob - heads_log_prob) \
-                * (rewards - self.baseline_reward)
+            J = torch.exp(current_log_prob - heads_log_prob) * scaled_advantage
         loss = -J.mean()
         
         self.optimizer.zero_grad()
@@ -141,6 +143,7 @@ class LSTMAgent(BaseAgent):
         lstm = copy.deepcopy(self.lstm).cpu()
         model_dict = {
             "baseline_reward": self.baseline_reward,
+            "reward_scale": self.reward_scale,
             "max_seq_len": self.max_seq_len,
             "embedding_dim": self.embedding_dim,
             "lstm_hidden_dim": self.lstm_hidden_dim,

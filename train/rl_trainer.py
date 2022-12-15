@@ -72,7 +72,7 @@ class ReplayBuffer:
         Store a sample into the replay buffer. All tensors need to be stored
         on CPU.
         """
-        self.heads[:, self.next_idx] = head
+        self.heads[:head.size(0), self.next_idx] = head
         self.rewards[self.next_idx] = reward
         self.log_probs[self.next_idx] = log_prob
 
@@ -94,6 +94,7 @@ class RLTrainer:
         agent_initial_lr: float = 1e-3,
         rnd_initial_lr: float = 1e-3,
         baseline_reward: float = 0,
+        reward_scale: float = 1,
         sample_per_step: int = 10,
         head_max_seq_len: int = 128,
         head_batch_size: int = 128,
@@ -116,7 +117,8 @@ class RLTrainer:
         )
 
         self.exploration_actor = LSTMAgent(
-            0, 
+            0,
+            1,
             head_max_seq_len,
             embedding_dim,
             lstm_hidden_dim,
@@ -125,6 +127,7 @@ class RLTrainer:
         )
         self.exploitation_actor = LSTMAgent(
             baseline_reward,
+            reward_scale,
             head_max_seq_len,
             embedding_dim,
             lstm_hidden_dim,
@@ -201,7 +204,31 @@ class RLTrainer:
 
     def get_reward(self, head_tensor: torch.LongTensor) -> float:
         self.logger.info(f"Trying head: f{head_tensor}...")
+        # TODO: add reward for longer heads
 
+        with torch.no_grad():
+            in_tensor = torch.zeros((1, 2048, 7, 7))
+            # If head is invalid, kill it
+            try:
+                head = self.form_head(head_tensor).share_memory()
+                head(in_tensor)
+            except Exception:
+                self.logger.info(
+                    f"Reward: 0 (invalid head), Time: {datetime.now().ctime()}"
+                )
+                return 0
+
+            # If head is egregiously large, kill it
+            flop_count = FlopCountAnalysis(head, in_tensor)
+            total_flops = flop_count.total()
+            # Hard-coded value for ResNet50 flop count (excluding default head)
+            head_flops_percentage = total_flops / (4142706176 + total_flops)
+            self.logger.info(f"Head flop count percentage: {head_flops_percentage}")
+            if head_flops_percentage > 0.001:
+                self.logger.info(
+                    f"Reward: 0 (head too large), Time: {datetime.now().ctime()}"
+                )
+                return 0
         # If head is invalid, kill it
         in_tensor = torch.zeros((1, 2048, 7, 7)).cuda()
         try:
@@ -283,7 +310,7 @@ class RLTrainer:
                     head_cpu, reward, log_probs[i].item()
                 )
 
-            rewards = torch.tensor(rewards_lst).cuda()
+            rewards = torch.tensor(rewards_lst).float().cuda()
 
             explore_bonus_dict = self.exploration_model.update(sampled_heads)
             explore_bonus = explore_bonus_dict["Exploration Reward"]
@@ -338,7 +365,6 @@ class RLTrainer:
                 exploit_loss_dict = self.exploitation_actor.update(
                     sampled_heads, rewards, False, log_probs
                 )
-
                 self.logger.info(
                     f"Step: {t+1}/{total_steps}, "
                     f"Replay iteration: {i+1}/{self.sample_per_step}, "
@@ -497,6 +523,7 @@ def main(args):
         args.agent_initial_lr,
         args.rnd_initial_lr,
         args.baseline_reward,
+        args.reward_scale,
         args.sample_per_step,
         args.head_max_seq_len,
         args.head_batch_size,
@@ -532,6 +559,8 @@ if __name__ == "__main__":
     parser.add_argument("--rnd-initial-lr", default=1e-3, type=float)
 
     parser.add_argument("--baseline-reward", default=0, type=float)
+    parser.add_argument("--reward-scale", default=1, type=float)
+
     parser.add_argument("--sample-per-step", default=10, type=int)
     parser.add_argument("--head-max-seq-len", default=128, type=int)
     parser.add_argument("--head-batch-size", default=128, type=int)
@@ -539,7 +568,7 @@ if __name__ == "__main__":
     parser.add_argument("--exploitation-steps", default=100, type=int)
 
     parser.add_argument("--training-lr", default=4e-3, type=float)
-    parser.add_argument("--training-batch-size", default=128, type=int)
+    parser.add_argument("--training-batch-size", default=32, type=int)
     parser.add_argument("--training-epochs", default=10, type=int)
     parser.add_argument("--logdir", default="./output/", type=str)
 

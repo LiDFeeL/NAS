@@ -156,7 +156,16 @@ class HeadWoLinear(nn.Module):
             layer_meta = layer_repr.split(":")
             assert len(layer_meta) == 2
             layer_type, layer_parameters_str = layer_meta
-            layer_parameters = tuple(map(int, layer_parameters_str.split(",")))
+
+            layer_parameters = tuple(
+                map(
+                    int,
+                    filter(
+                        lambda x: x != "",
+                        layer_parameters_str.split(",")
+                    )
+                )
+            )
 
             # Form layer
             layer = Layer(LayerType[layer_type], layer_parameters)
@@ -332,7 +341,7 @@ def main(args):
         batch_size=args.batch_size,
         epochs=args.epochs,
         logdir=args.logdir,
-        eval_between_epochs=not args.no_eval_between_epochs,
+        do_logging=not args.no_logging,
     )
 
     if utils.is_main_process() and args.save_model:
@@ -359,7 +368,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", "-b", default=128, type=int)
     parser.add_argument("--epochs", "-ep", default=100, type=int)
     parser.add_argument("--freeze-backbone", "-fb", action="store_true")
-    parser.add_argument("--no-eval-between-epochs", "-nebe", action="store_true")
+    parser.add_argument("--no-logging", "-nolog", action="store_true")
 
     parser.add_argument("--path-to-data", default="./data/", type=str)
     parser.add_argument("--save-model", "-sm", action="store_true")
